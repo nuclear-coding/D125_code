@@ -3,7 +3,7 @@ import csv
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
-
+#test
 def parse_bin_file(file_path): #Функция для парса bin файла
     # Формат: prefix(4B), deviceId(I), channelId(H), timestamp(Q),
     # cfd_y1(h), cfd_y2(h), heigth(h), baseline(h),
