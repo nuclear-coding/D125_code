@@ -204,7 +204,7 @@ def plot_spectra_comparison(csv_file):
     qlong_values = qlong_values[mask]
     qshort_values = qshort_values[mask]
 
-    # Define binning for qlong: 4096 bins from qlong_min to qlong_max
+    # Тут изменение шкалы Х: 4096 бинов от qlong_min до qlong_max
     qlong_min = 0
     qlong_max = 100_000
     num_bins = 4096
