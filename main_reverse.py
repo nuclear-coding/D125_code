@@ -4,6 +4,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
+# === PSD THRESHOLD SETTING ===
+PSD_THRESHOLD = 0.1474  # Change this value to update threshold everywhere
+
+
+# === PSD THRESHOLD SETTING ===
+
 
 def parse_bin_file(file_path):
     """
@@ -63,16 +69,16 @@ def plot_specta_from_csv(csv_file, filter_psd_threshold=True):
     qlong_values = qlong_values[mask]
     qshort_values = qshort_values[mask]
     print(f"Всего точек в спектре: {len(qlong_values)}")
-    psd_threshold = 0.15
+
     if filter_psd_threshold:
         valid = qlong_values > 0
         qlong_valid = qlong_values[valid]
         qshort_valid = qshort_values[valid]
         psd = 1 - (qshort_valid / qlong_valid)
-        mask = (psd > psd_threshold) & np.isfinite(psd)
+        mask = (psd > PSD_THRESHOLD) & np.isfinite(psd)
         qlong_valid = qlong_valid[mask]
         qshort_valid = qshort_valid[mask]
-        print(f"После фильтрации PSD > {psd_threshold}: {len(qlong_valid)}")
+        print(f"После фильтрации PSD > {PSD_THRESHOLD}: {len(qlong_valid)}")
         qlong_values = qlong_valid
         qshort_values = qshort_valid
     else:
@@ -118,12 +124,11 @@ def plot_psd_from_csv(csv_file, num_bins=200, filter_psd_threshold=True):
     qlong_values = qlong_values[mask]
     qshort_values = qshort_values[mask]
     psd = 1 - (qshort_values / qlong_values)
-    psd_threshold = 0.15
-    print(f"Всего точек в псд: {len(psd)}")
+
     if filter_psd_threshold:
-        mask = psd > psd_threshold
+        mask = psd > PSD_THRESHOLD
         psd = psd[mask]
-        print(f"После фильтрации PSD > {psd_threshold}: {len(psd)}")
+        print(f"После фильтрации PSD > {PSD_THRESHOLD}: {len(psd)}")
     psd = psd[np.isfinite(psd)]
     plt.figure(figsize=(10, 6))
     plt.hist(psd, bins=num_bins, range=(0, 1), edgecolor='black')
@@ -144,19 +149,34 @@ def save_spectra_to_csv(bin_numbers, counts_unfiltered, counts_filtered, output_
         for b, cu, cf in zip(bin_numbers, counts_unfiltered, counts_filtered):
             writer.writerow([b, cu, cf])
 
+
 def save_psd_to_csv(psd_unfiltered, psd_filtered, output_file):
     """
     Save PSD values (unfiltered and filtered) to a CSV file.
+    Each row contains one value from each array, in separate columns.
     """
     max_len = max(len(psd_unfiltered), len(psd_filtered))
-    # Pad shorter array with empty values
+    # Pad shorter array with empty values (NaN)
     psd_unfiltered = np.pad(psd_unfiltered, (0, max_len - len(psd_unfiltered)), constant_values=np.nan)
     psd_filtered = np.pad(psd_filtered, (0, max_len - len(psd_filtered)), constant_values=np.nan)
     with open(output_file, 'w', newline='') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=',')  # Ensure comma delimiter
         writer.writerow(['psd_unfiltered', 'psd_filtered'])
         for pu, pf in zip(psd_unfiltered, psd_filtered):
             writer.writerow([pu, pf])
+
+
+def save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, output_file):
+    """
+    Save PSD histogram bin centers and counts (unfiltered and filtered) to a CSV file.
+    Each row contains one bin center and the counts for both cases.
+    """
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.writer(f, delimiter=',')
+        writer.writerow(['bin_center', 'count_unfiltered', 'count_filtered'])
+        for b, cu, cf in zip(bin_centers, counts_unfiltered, counts_filtered):
+            writer.writerow([b, cu, cf])
+
 
 def plot_spectra_comparison(csv_file):
     """
@@ -176,7 +196,6 @@ def plot_spectra_comparison(csv_file):
     mask = (qlong_values > 0) & (qshort_values >= 0)
     qlong_values = qlong_values[mask]
     qshort_values = qshort_values[mask]
-    psd_threshold = 0.15
 
     # Unfiltered
     qlong_unfiltered = qlong_values[qlong_values > 0]
@@ -191,9 +210,9 @@ def plot_spectra_comparison(csv_file):
     qlong_valid = qlong_values[valid]
     qshort_valid = qshort_values[valid]
     psd = 1 - (qshort_valid / qlong_valid)
-    mask_psd = (psd > psd_threshold) & np.isfinite(psd)
+    mask_psd = (psd > PSD_THRESHOLD) & np.isfinite(psd)
     qlong_filtered = qlong_valid[mask_psd]
-    print(f"Спектр: всего точек с фильтром PSD > {psd_threshold}: {len(qlong_filtered)}")
+    print(f"Спектр: всего точек с фильтром PSD > {PSD_THRESHOLD}: {len(qlong_filtered)}")
     if len(qlong_filtered) > 0:
         q_min_f, q_max_f = qlong_filtered.min(), qlong_filtered.max()
         normalized_bins_filtered = np.floor((qlong_filtered - q_min_f) / (q_max_f - q_min_f) * 4095).astype(int)
@@ -207,7 +226,7 @@ def plot_spectra_comparison(csv_file):
 
     plt.figure(figsize=(12, 6))
     plt.plot(bin_numbers, counts_unfiltered, color='blue', label='Без фильтра PSD')
-    plt.plot(bin_numbers, counts_filtered, color='red', label=f'С фильтром PSD > {psd_threshold}')
+    plt.plot(bin_numbers, counts_filtered, color='red', label=f'С фильтром PSD > {PSD_THRESHOLD}')
     plt.xlabel('Номер канала')
     plt.ylabel('Количество событий')
     plt.yscale('log')
@@ -221,11 +240,12 @@ def plot_spectra_comparison(csv_file):
     plt.legend()
     plt.tight_layout()
 
+
 def plot_psd_comparison(csv_file, num_bins=200):
     """
     Plot both filtered and unfiltered PSD histograms on the same figure for comparison.
     Colors in the legend match the histogram colors.
-    Also saves the plotted data to a CSV file.
+    Also saves the plotted histogram data to a CSV file (bin centers and counts).
     Prints the number of points for each case.
     """
     qlong_values, qshort_values = [], []
@@ -244,27 +264,35 @@ def plot_psd_comparison(csv_file, num_bins=200):
     qshort_values = qshort_values[mask]
     psd = 1 - (qshort_values / qlong_values)
     psd = psd[np.isfinite(psd)]
-    psd_threshold = 0.15
+
     # Unfiltered
     psd_unfiltered = psd
     print(f"PSD: всего точек без фильтра: {len(psd_unfiltered)}")
     # Filtered
-    psd_filtered = psd[psd > psd_threshold]
-    print(f"PSD: всего точек с фильтром PSD > {psd_threshold}: {len(psd_filtered)}")
+    psd_filtered = psd[psd > PSD_THRESHOLD]
+    print(f"PSD: всего точек с фильтром PSD > {PSD_THRESHOLD}: {len(psd_filtered)}")
 
-    # Save PSD data
+    # Compute histograms for both cases
+    counts_unfiltered, bin_edges = np.histogram(psd_unfiltered, bins=num_bins, range=(0, 1))
+    counts_filtered, _ = np.histogram(psd_filtered, bins=bin_edges)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    # Save PSD histogram data
     psd_csv = Path(csv_file).with_name('psd_plot_data.csv')
-    save_psd_to_csv(psd_unfiltered, psd_filtered, psd_csv)
+    save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, psd_csv)
 
     plt.figure(figsize=(10, 6))
-    n1, bins1, patches1 = plt.hist(psd_unfiltered, bins=num_bins, range=(0, 1), edgecolor='black', alpha=0.5, color='blue', label='Без фильтра PSD')
-    n2, bins2, patches2 = plt.hist(psd_filtered, bins=num_bins, range=(0, 1), edgecolor='red', alpha=0.5, color='red', label=f'С фильтром PSD > {psd_threshold}')
+    plt.hist(psd_unfiltered, bins=bin_edges.tolist(), edgecolor='black', alpha=0.5, color='blue',
+             label='Без фильтра PSD')
+    plt.hist(psd_filtered, bins=bin_edges.tolist(), edgecolor='red', alpha=0.5, color='red',
+             label=f'С фильтром PSD > {PSD_THRESHOLD}')
     plt.xlabel('PSD')
     plt.ylabel('Количество событий')
     plt.title('Сравнение PSD-диаграмм (без фильтра и с фильтром PSD)')
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend()
     plt.tight_layout()
+
 
 def main():
     bin_file = '/Users/babich/PycharmProjects/api/data_psd_ING07T-300s_117kV_2025_07_08__17_04_54.bin'
