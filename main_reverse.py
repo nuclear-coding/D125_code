@@ -3,38 +3,36 @@ import csv
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
-#test
-def parse_bin_file(file_path): #Функция для парса bin файла
-    # Формат: prefix(4B), deviceId(I), channelId(H), timestamp(Q),
-    # cfd_y1(h), cfd_y2(h), heigth(h), baseline(h),
-    # qLong(i), qShort(i), psdValue(h), eventCounter(I),
-    # eventCounterPSD(I), decimationFactor(H), postfix(4B)
-    record_format = '<4B I H Q h h h h i i h I I H 4B'  # 56 байт
+
+
+def parse_bin_file(file_path):
+    """
+    Parse a binary file into a list of records.
+    Format: prefix(4B), deviceId(I), channelId(H), timestamp(Q),
+    cfd_y1(h), cfd_y2(h), heigth(h), baseline(h),
+    qLong(i), qShort(i), psdValue(h), eventCounter(I),
+    eventCounterPSD(I), decimationFactor(H), postfix(4B)
+    """
+    record_format = '<4B I H Q h h h h i i h I I H 4B'  # 56 bytes
     record_size = struct.calcsize(record_format)
-
     parsed_records = []
-    with open(file_path, 'rb') as f:
-        f.read(8)  # пропускаем заголовок (8 байт)
 
+    with open(file_path, 'rb') as f:
+        f.read(8)  # skip header (8 bytes)
         while True:
             chunk = f.read(record_size)
             if len(chunk) < record_size:
                 break
             values = struct.unpack(record_format, chunk)
-            # # Разбиваем сырые байты по полям
-            # splitted = split_raw_bytes_by_format(chunk, record_format[1:])  # убираем "<"
-            # print("Raw bytes split by fields:")
-            # for b, fmt_code, size in splitted:
-            #     print(f"{fmt_code:5}: {b.hex()}  ({size} bytes)")
-            # print("Parsed values:", values)
-            # print("-" * 40)
             parsed_records.append(values)
-
     return parsed_records
 
-def save_to_csv(records, bin_filename): # Функция для сохранения результатов парса в csv
-    csv_filename = Path(bin_filename).with_suffix('.csv')
 
+def save_to_csv(records, bin_filename):
+    """
+    Save parsed records to a CSV file.
+    """
+    csv_filename = Path(bin_filename).with_suffix('.csv')
     header = [
         'title1_4', 'title2_4', 'title3_4', 'title4_4',
         'deviceId', 'channelId', 'timestamp',
@@ -43,111 +41,242 @@ def save_to_csv(records, bin_filename): # Функция для сохранен
         'eventCounter', 'eventCounterPSD', 'decimationFactor',
         'postfix1', 'postfix2', 'postfix3', 'postfix4'
     ]
-
     with open(csv_filename, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(header)
         writer.writerows(records)
 
-# def split_raw_bytes_by_format(raw_bytes, fmt):
-#     """
-#     Разбивает raw_bytes согласно fmt на куски, соответствующие каждому полю.
-#     Возвращает список кортежей (field_bytes, field_name, size).
-#     """
-#     sizes = []
-#     i = 0
-#     # Разбор формата на части с учётом повторений, например '4B', 'I', 'H' и т.п.
-#     import re
-#     pattern = re.compile(r'(\d*)([xcbBhHiIlLqQnPfd])')
-#
-#     fields = []
-#     for count, code in pattern.findall(fmt):
-#         count = int(count) if count else 1
-#         size = struct.calcsize(f'{count}{code}')
-#         fields.append((count, code, size))
-#
-#     result = []
-#     pos = 0
-#     for count, code, size in fields:
-#         field_bytes = raw_bytes[pos:pos + size]
-#         result.append((field_bytes, f'{count if count > 1 else ""}{code}', size))
-#         pos += size
-#     return result
 
-def plot_specta_from_csv(csv_file): # Функция для построения спектра отклика
-    qlong_values = []
-
-    # Считываем qLong
+def plot_specta_from_csv(csv_file, filter_psd_threshold=True):
+    """
+    Plot the response spectrum from CSV data, with optional PSD filtering.
+    """
+    qlong_values, qshort_values = [], []
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f)
         for row in reader:
             qlong_values.append(int(row['qLong']))
-
+            qshort_values.append(int(row['qShort']))
     qlong_values = np.array(qlong_values)
-    q_min = qlong_values.min()
-    q_max = qlong_values.max()
-
-    # Нормируем значения qLong в диапазон [0, 4095], затем округляем до целых бинов [0, 4095]
+    qshort_values = np.array(qshort_values)
+    mask = (qlong_values > 0) & (qshort_values >= 0)
+    qlong_values = qlong_values[mask]
+    qshort_values = qshort_values[mask]
+    print(f"Всего точек в спектре: {len(qlong_values)}")
+    psd_threshold = 0.15
+    if filter_psd_threshold:
+        valid = qlong_values > 0
+        qlong_valid = qlong_values[valid]
+        qshort_valid = qshort_values[valid]
+        psd = 1 - (qshort_valid / qlong_valid)
+        mask = (psd > psd_threshold) & np.isfinite(psd)
+        qlong_valid = qlong_valid[mask]
+        qshort_valid = qshort_valid[mask]
+        print(f"После фильтрации PSD > {psd_threshold}: {len(qlong_valid)}")
+        qlong_values = qlong_valid
+        qshort_values = qshort_valid
+    else:
+        qlong_values = qlong_values[qlong_values > 0]
+    if len(qlong_values) == 0:
+        print("Нет данных для построения спектра.")
+        return
+    q_min, q_max = qlong_values.min(), qlong_values.max()
     normalized_bins = np.floor((qlong_values - q_min) / (q_max - q_min) * 4095).astype(int)
-
-    # Строим гистограмму: 4096 бинов, индексы от 0 до 4095 → X от 1 до 4096
     counts = np.bincount(normalized_bins, minlength=4096)
-    bin_numbers = np.arange(1, 4097)  # от 1 до 4096 включительно
-
-    # Визуализация
+    bin_numbers = np.arange(1, 4097)
     plt.figure(figsize=(12, 6))
     plt.bar(bin_numbers, counts, width=1.0, edgecolor='black')
     plt.xlabel('Номер канала')
     plt.ylabel('Количество событий')
-    plt.title('Спектр отклика')
+    plt.yscale('log')
+    plt.title(f"Спектр отклика (PSD фильтр = {filter_psd_threshold})")
     plt.grid(True, axis='y', linestyle='--', alpha=0.5)
     plt.grid(True, axis='x', linestyle='--', alpha=0.5)
-    # Кастомный шаг по х
     plt.xticks(
         ticks=np.arange(0, 4096, 250),
-        labels=np.arange(0, 4096, 250)
+        labels=[str(x) for x in np.arange(0, 4096, 250)]
     )
     plt.tight_layout()
 
-def plot_psd_from_csv(csv_file, num_bins=200): #Функция для построения PSD-диаграммы
-    qlong = []
-    qshort = []
 
-    # Читаем значения из CSV
+def plot_psd_from_csv(csv_file, num_bins=200, filter_psd_threshold=True):
+    """
+    Plot the PSD diagram from CSV data, with optional PSD filtering.
+    """
+    qlong_values, qshort_values = [], []
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f)
         for row in reader:
             ql = int(row['qLong'])
             qs = int(row['qShort'])
-
-            # Пропускаем некорректные значения, чтобы избежать деления на 0
             if ql > 0:
-                qlong.append(ql)
-                qshort.append(qs)
-
-    qlong = np.array(qlong)
-    qshort = np.array(qshort)
-
-    # Вычисляем PSD = 1 - qShort / qLong
-    psd = 1 - (qshort / qlong)
-
-    # Фильтрация NaN, inf, -inf (если все же остались)
+                qlong_values.append(ql)
+                qshort_values.append(qs)
+    qlong_values = np.array(qlong_values)
+    qshort_values = np.array(qshort_values)
+    mask = (qlong_values > 0) & (qshort_values >= 0)
+    qlong_values = qlong_values[mask]
+    qshort_values = qshort_values[mask]
+    psd = 1 - (qshort_values / qlong_values)
+    psd_threshold = 0.15
+    print(f"Всего точек в псд: {len(psd)}")
+    if filter_psd_threshold:
+        mask = psd > psd_threshold
+        psd = psd[mask]
+        print(f"После фильтрации PSD > {psd_threshold}: {len(psd)}")
     psd = psd[np.isfinite(psd)]
-
-    # Строим гистограмму
     plt.figure(figsize=(10, 6))
-    plt.hist(psd, bins=num_bins, range=(0,1), edgecolor='black')
+    plt.hist(psd, bins=num_bins, range=(0, 1), edgecolor='black')
     plt.xlabel('PSD')
     plt.ylabel('Количество событий')
-    plt.title('PSD-диаграмма')
+    plt.title(f"PSD-диаграмма (PSD фильтр = {filter_psd_threshold})")
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
 
-# Основной код
-bin_file = '/Users/babich/PycharmProjects/api/data_psd_2025_07_07__16_20_00.bin'
-records = parse_bin_file(bin_file)
-save_to_csv(records, bin_file)
-csv_filename = Path(bin_file).with_suffix('.csv')
-plot_specta_from_csv(csv_filename)
-plot_psd_from_csv(csv_filename)
-plt.show()
+
+def save_spectra_to_csv(bin_numbers, counts_unfiltered, counts_filtered, output_file):
+    """
+    Save spectra bin numbers and counts (unfiltered and filtered) to a CSV file.
+    """
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['bin_number', 'count_unfiltered', 'count_filtered'])
+        for b, cu, cf in zip(bin_numbers, counts_unfiltered, counts_filtered):
+            writer.writerow([b, cu, cf])
+
+def save_psd_to_csv(psd_unfiltered, psd_filtered, output_file):
+    """
+    Save PSD values (unfiltered and filtered) to a CSV file.
+    """
+    max_len = max(len(psd_unfiltered), len(psd_filtered))
+    # Pad shorter array with empty values
+    psd_unfiltered = np.pad(psd_unfiltered, (0, max_len - len(psd_unfiltered)), constant_values=np.nan)
+    psd_filtered = np.pad(psd_filtered, (0, max_len - len(psd_filtered)), constant_values=np.nan)
+    with open(output_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['psd_unfiltered', 'psd_filtered'])
+        for pu, pf in zip(psd_unfiltered, psd_filtered):
+            writer.writerow([pu, pf])
+
+def plot_spectra_comparison(csv_file):
+    """
+    Plot both filtered and unfiltered response spectra on the same figure for comparison.
+    Uses line plots for clear color/legend correspondence.
+    Also saves the plotted data to a CSV file.
+    Prints the number of points for each case.
+    """
+    qlong_values, qshort_values = [], []
+    with open(csv_file, newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            qlong_values.append(int(row['qLong']))
+            qshort_values.append(int(row['qShort']))
+    qlong_values = np.array(qlong_values)
+    qshort_values = np.array(qshort_values)
+    mask = (qlong_values > 0) & (qshort_values >= 0)
+    qlong_values = qlong_values[mask]
+    qshort_values = qshort_values[mask]
+    psd_threshold = 0.15
+
+    # Unfiltered
+    qlong_unfiltered = qlong_values[qlong_values > 0]
+    print(f"Спектр: всего точек без фильтра: {len(qlong_unfiltered)}")
+    q_min, q_max = qlong_unfiltered.min(), qlong_unfiltered.max()
+    normalized_bins_unfiltered = np.floor((qlong_unfiltered - q_min) / (q_max - q_min) * 4095).astype(int)
+    counts_unfiltered = np.bincount(normalized_bins_unfiltered, minlength=4096)
+    bin_numbers = np.arange(1, 4097)
+
+    # Filtered
+    valid = qlong_values > 0
+    qlong_valid = qlong_values[valid]
+    qshort_valid = qshort_values[valid]
+    psd = 1 - (qshort_valid / qlong_valid)
+    mask_psd = (psd > psd_threshold) & np.isfinite(psd)
+    qlong_filtered = qlong_valid[mask_psd]
+    print(f"Спектр: всего точек с фильтром PSD > {psd_threshold}: {len(qlong_filtered)}")
+    if len(qlong_filtered) > 0:
+        q_min_f, q_max_f = qlong_filtered.min(), qlong_filtered.max()
+        normalized_bins_filtered = np.floor((qlong_filtered - q_min_f) / (q_max_f - q_min_f) * 4095).astype(int)
+        counts_filtered = np.bincount(normalized_bins_filtered, minlength=4096)
+    else:
+        counts_filtered = np.zeros(4096, dtype=int)
+
+    # Save spectra data
+    spectra_csv = Path(csv_file).with_name('spectra_plot_data.csv')
+    save_spectra_to_csv(bin_numbers, counts_unfiltered, counts_filtered, spectra_csv)
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(bin_numbers, counts_unfiltered, color='blue', label='Без фильтра PSD')
+    plt.plot(bin_numbers, counts_filtered, color='red', label=f'С фильтром PSD > {psd_threshold}')
+    plt.xlabel('Номер канала')
+    plt.ylabel('Количество событий')
+    plt.yscale('log')
+    plt.title('Сравнение спектров отклика (без фильтра и с фильтром PSD)')
+    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    plt.grid(True, axis='x', linestyle='--', alpha=0.5)
+    plt.xticks(
+        ticks=np.arange(0, 4096, 250),
+        labels=[str(x) for x in np.arange(0, 4096, 250)]
+    )
+    plt.legend()
+    plt.tight_layout()
+
+def plot_psd_comparison(csv_file, num_bins=200):
+    """
+    Plot both filtered and unfiltered PSD histograms on the same figure for comparison.
+    Colors in the legend match the histogram colors.
+    Also saves the plotted data to a CSV file.
+    Prints the number of points for each case.
+    """
+    qlong_values, qshort_values = [], []
+    with open(csv_file, newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ql = int(row['qLong'])
+            qs = int(row['qShort'])
+            if ql > 0:
+                qlong_values.append(ql)
+                qshort_values.append(qs)
+    qlong_values = np.array(qlong_values)
+    qshort_values = np.array(qshort_values)
+    mask = (qlong_values > 0) & (qshort_values >= 0)
+    qlong_values = qlong_values[mask]
+    qshort_values = qshort_values[mask]
+    psd = 1 - (qshort_values / qlong_values)
+    psd = psd[np.isfinite(psd)]
+    psd_threshold = 0.15
+    # Unfiltered
+    psd_unfiltered = psd
+    print(f"PSD: всего точек без фильтра: {len(psd_unfiltered)}")
+    # Filtered
+    psd_filtered = psd[psd > psd_threshold]
+    print(f"PSD: всего точек с фильтром PSD > {psd_threshold}: {len(psd_filtered)}")
+
+    # Save PSD data
+    psd_csv = Path(csv_file).with_name('psd_plot_data.csv')
+    save_psd_to_csv(psd_unfiltered, psd_filtered, psd_csv)
+
+    plt.figure(figsize=(10, 6))
+    n1, bins1, patches1 = plt.hist(psd_unfiltered, bins=num_bins, range=(0, 1), edgecolor='black', alpha=0.5, color='blue', label='Без фильтра PSD')
+    n2, bins2, patches2 = plt.hist(psd_filtered, bins=num_bins, range=(0, 1), edgecolor='red', alpha=0.5, color='red', label=f'С фильтром PSD > {psd_threshold}')
+    plt.xlabel('PSD')
+    plt.ylabel('Количество событий')
+    plt.title('Сравнение PSD-диаграмм (без фильтра и с фильтром PSD)')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+
+def main():
+    bin_file = '/Users/babich/PycharmProjects/api/data_psd_ING07T-300s_117kV_2025_07_08__17_04_54.bin'
+    records = parse_bin_file(bin_file)
+    save_to_csv(records, bin_file)
+    csv_filename = Path(bin_file).with_suffix('.csv')
+    # Plot spectra comparison
+    plot_spectra_comparison(csv_filename)
+    # Plot PSD comparison
+    plot_psd_comparison(csv_filename)
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()

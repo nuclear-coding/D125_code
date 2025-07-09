@@ -10,14 +10,7 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="/data_psd_2025_07_07__16_20_00_parsed.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="/data_psd_2025_07_07__16_20_00_parsed_reversed.csv">
+        <entry key="/data_psd_ING07T-300s_117kV_2025_07_08__17_04_54.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />
