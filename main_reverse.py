@@ -37,6 +37,7 @@ def parse_bin_file(file_path):
 def save_to_csv(records, bin_filename):
     """
     Save parsed records to a CSV file.
+    Each value is written to its own cell (column), not as a string with separators.
     """
     csv_filename = Path(bin_filename).with_suffix('.csv')
     header = [
@@ -48,9 +49,14 @@ def save_to_csv(records, bin_filename):
         'postfix1', 'postfix2', 'postfix3', 'postfix4'
     ]
     with open(csv_filename, 'w', newline='') as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, delimiter=',')  # Ensure comma delimiter
         writer.writerow(header)
-        writer.writerows(records)
+        for row in records:
+            # If any value is a tuple or list, flatten it; otherwise, just write the row
+            if isinstance(row, (tuple, list)):
+                writer.writerow(list(row))
+            else:
+                writer.writerow([row])
 
 
 def plot_specta_from_csv(csv_file, filter_psd_threshold=True):
@@ -139,14 +145,14 @@ def plot_psd_from_csv(csv_file, num_bins=200, filter_psd_threshold=True):
     plt.tight_layout()
 
 
-def save_spectra_to_csv(bin_numbers, counts_unfiltered, counts_filtered, output_file):
+def save_spectra_to_csv(bin_centers, counts_unfiltered, counts_filtered, output_file, bin_filename=None):
     """
-    Save spectra bin numbers and counts (unfiltered and filtered) to a CSV file.
+    Save spectra bin centers and counts (unfiltered and filtered) to a CSV file.
     """
     with open(output_file, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['bin_number', 'count_unfiltered', 'count_filtered'])
-        for b, cu, cf in zip(bin_numbers, counts_unfiltered, counts_filtered):
+        writer.writerow(['bin_center', 'count_unfiltered', 'count_filtered'])
+        for b, cu, cf in zip(bin_centers, counts_unfiltered, counts_filtered):
             writer.writerow([b, cu, cf])
 
 
@@ -166,7 +172,7 @@ def save_psd_to_csv(psd_unfiltered, psd_filtered, output_file):
             writer.writerow([pu, pf])
 
 
-def save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, output_file):
+def save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, output_file, bin_filename=None):
     """
     Save PSD histogram bin centers and counts (unfiltered and filtered) to a CSV file.
     Each row contains one bin center and the counts for both cases.
@@ -184,6 +190,7 @@ def plot_spectra_comparison(csv_file):
     Uses line plots for clear color/legend correspondence.
     Also saves the plotted data to a CSV file.
     Prints the number of points for each case.
+    The x-axis (qlong) always starts at 0 and ends at 200,000, with 4096 bins.
     """
     qlong_values, qshort_values = [], []
     with open(csv_file, newline='') as f:
@@ -197,13 +204,17 @@ def plot_spectra_comparison(csv_file):
     qlong_values = qlong_values[mask]
     qshort_values = qshort_values[mask]
 
+    # Define binning for qlong: 4096 bins from qlong_min to qlong_max
+    qlong_min = 0
+    qlong_max = 100_000
+    num_bins = 4096
+    bin_edges = np.linspace(qlong_min, qlong_max, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
     # Unfiltered
     qlong_unfiltered = qlong_values[qlong_values > 0]
     print(f"Спектр: всего точек без фильтра: {len(qlong_unfiltered)}")
-    q_min, q_max = qlong_unfiltered.min(), qlong_unfiltered.max()
-    normalized_bins_unfiltered = np.floor((qlong_unfiltered - q_min) / (q_max - q_min) * 4095).astype(int)
-    counts_unfiltered = np.bincount(normalized_bins_unfiltered, minlength=4096)
-    bin_numbers = np.arange(1, 4097)
+    counts_unfiltered, _ = np.histogram(qlong_unfiltered, bins=bin_edges)
 
     # Filtered
     valid = qlong_values > 0
@@ -213,30 +224,31 @@ def plot_spectra_comparison(csv_file):
     mask_psd = (psd > PSD_THRESHOLD) & np.isfinite(psd)
     qlong_filtered = qlong_valid[mask_psd]
     print(f"Спектр: всего точек с фильтром PSD > {PSD_THRESHOLD}: {len(qlong_filtered)}")
-    if len(qlong_filtered) > 0:
-        q_min_f, q_max_f = qlong_filtered.min(), qlong_filtered.max()
-        normalized_bins_filtered = np.floor((qlong_filtered - q_min_f) / (q_max_f - q_min_f) * 4095).astype(int)
-        counts_filtered = np.bincount(normalized_bins_filtered, minlength=4096)
-    else:
-        counts_filtered = np.zeros(4096, dtype=int)
+    counts_filtered, _ = np.histogram(qlong_filtered, bins=bin_edges)
 
     # Save spectra data
-    spectra_csv = Path(csv_file).with_name('spectra_plot_data.csv')
-    save_spectra_to_csv(bin_numbers, counts_unfiltered, counts_filtered, spectra_csv)
+    bin_file_name = Path(csv_file).with_suffix('.bin').name
+    spectra_csv = Path(csv_file).with_name(f'spectra_plot_data_{bin_file_name}.csv')
+    save_spectra_to_csv(bin_centers, counts_unfiltered, counts_filtered, spectra_csv, bin_filename=bin_file_name)
 
     plt.figure(figsize=(12, 6))
-    plt.plot(bin_numbers, counts_unfiltered, color='blue', label='Без фильтра PSD')
-    plt.plot(bin_numbers, counts_filtered, color='red', label=f'С фильтром PSD > {PSD_THRESHOLD}')
-    plt.xlabel('Номер канала')
+    plt.plot(bin_centers, counts_unfiltered, color='blue', label='Без фильтра PSD')
+    plt.plot(bin_centers, counts_filtered, color='red', label=f'С фильтром PSD > {PSD_THRESHOLD}')
+    plt.xlabel('qLong')
     plt.ylabel('Количество событий')
     plt.yscale('log')
+    plt.xlim(qlong_min, qlong_max)
     plt.title('Сравнение спектров отклика (без фильтра и с фильтром PSD)')
     plt.grid(True, axis='y', linestyle='--', alpha=0.5)
     plt.grid(True, axis='x', linestyle='--', alpha=0.5)
+
+    # ТУТ МЕНЯТЬ ШАГ ПО ОСИ X
     plt.xticks(
-        ticks=np.arange(0, 4096, 250),
-        labels=[str(x) for x in np.arange(0, 4096, 250)]
+        ticks=np.arange(0, qlong_max + 1, 5_000),
+        labels=[str(x) for x in np.arange(0, qlong_max + 1, 5_000)]
     )
+    # ТУТ МЕНЯТЬ ШАГ ПО ОСИ Х
+
     plt.legend()
     plt.tight_layout()
 
@@ -278,8 +290,9 @@ def plot_psd_comparison(csv_file, num_bins=200):
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
     # Save PSD histogram data
-    psd_csv = Path(csv_file).with_name('psd_plot_data.csv')
-    save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, psd_csv)
+    bin_file_name = Path(csv_file).with_suffix('.bin').name
+    psd_csv = Path(csv_file).with_name(f'psd_plot_data_{bin_file_name}.csv')
+    save_psd_hist_to_csv(bin_centers, counts_unfiltered, counts_filtered, psd_csv, bin_filename=bin_file_name)
 
     plt.figure(figsize=(10, 6))
     plt.hist(psd_unfiltered, bins=bin_edges.tolist(), edgecolor='black', alpha=0.5, color='blue',
